@@ -1,0 +1,8 @@
+SQLAlchemy
+pandas
+pyhive
+thrift
+thrift-sasl
+pymysql
+tqdm
+hdfs

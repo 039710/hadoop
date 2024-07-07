@@ -1,0 +1,127 @@
+version: '3.1'
+
+services:
+  mysql:
+    # success
+    image: mysql:5.7
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: sakila
+      MYSQL_USER: hive
+      MYSQL_PASSWORD: hive
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./sakila-db:/docker-entrypoint-initdb.d
+    hostname: mysql
+    networks:
+      - default
+
+  hadoop-namenode:
+    # success
+    image: bde2020/hadoop-namenode:2.0.0-hadoop2.7.4-java8
+    ports:
+      - "50070:50070"
+    hostname: hadoop-namenode
+    environment:
+      CLUSTER_NAME: hadoop-cluster
+    env_file:
+      - .env
+    networks:
+      - default
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://hadoop-namenode:50070" ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  hadoop-datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop2.7.4-java8
+
+    environment:
+      SERVICE_PRECONDITION: "hadoop-namenode:50070"
+      CORE_CONF_fs_defaultFS: hdfs://hadoop-namenode:8020
+      CORE_CONF_hadoop_proxyuser_hue_hosts: '*'
+      CORE_CONF_hadoop_proxyuser_hue_groups: '*'
+      HDFS_CONF_dfs_namenode_datanode_registration_ip___hostname___check: false
+    ports:
+      - "50075:50075"
+    hostname: hadoop-datanode
+    env_file:
+      - .env
+    depends_on:
+      - hadoop-namenode
+    networks:
+      - default
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://hadoop-datanode:50075" ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  hive-metastore-postgresql:
+    image: bde2020/hive-metastore-postgresql:2.3.0
+    ports:
+      - "5432:5432"
+    hostname: hive-metastore-postgresql
+    networks:
+      - default
+
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    ports:
+      - "9083:9083"
+    hostname: hive-metastore
+    command: /opt/hive/bin/hive --service metastore
+    environment:
+      SERVICE_PRECONDITION: "hive-metastore-postgresql:5432"
+    env_file:
+      - .env
+    depends_on:
+      - hive-metastore-postgresql
+    networks:
+      - default
+
+  hive-server:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    environment:
+      HIVE_CORE_CONF_javax_jdo_option_ConnectionURL: "jdbc:postgresql://hive-metastore/metastore"
+      SERVICE_PRECONDITION: "hive-metastore:9083"
+    env_file:
+      - .env
+    depends_on:
+      - hive-metastore
+    hostname: hive-server
+    ports:
+      - "10000:10000"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:10000" ]
+      interval: 5s
+      timeout: 5s
+      retries: 100
+      start_period: 30s
+    networks:
+      - default
+
+  app:
+    build:
+      context: .
+      dockerfile: dockerfile
+    networks:
+      - default
+    depends_on:
+      hive-server:
+        condition: service_healthy
+
+    volumes:
+      - ./ingest.py:/app/ingest.py
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:10000" ]
+      interval: 10s
+      timeout: 10s
+      retries: 100
+      start_period: 30s
+
+networks:
+  default:
+    driver: bridge
